@@ -1,0 +1,151 @@
+---
+description: How we test the P2P API — the docs are the oracle, black-box only, own data per test, positive/negative/error per endpoint, schema checks, one tag, evidence labels.
+globs: tests/**
+alwaysApply: false
+---
+
+# P2P API testing
+
+`docs/API.md` and `GET /openapi.json` are the oracle. Tests call HTTP only, through Playwright's `request` fixture.
+
+## 1. Oracle
+
+`docs/API.md` and `/openapi.json` define correct behavior. If the running API differs, keep the documented expectation and let the test fail — report the defect; never weaken or rewrite the assertion to match the API. Behavior neither document covers belongs in `docs/QUESTIONS.md` as assumed until a human answers; do not assert it yet.
+
+```typescript
+// ✅ GOOD — docs say inactive vendor → 400 inactive_vendor_gate. API returned 201; leave the expectation.
+const res = await request.post('/purchase-orders', {
+  data: { vendor_id: 'vnd-002', line_items: [{ sku: 'LUM-2X4-8', quantity: 10, unit_price: 4.75 }] },
+});
+expect(res.status()).toBe(400);
+expect((await res.json()).rule).toBe('inactive_vendor_gate');
+
+// ❌ BAD — weakened to either status, rewritten to the observed 201, or asserting an open question
+expect([201, 400]).toContain(res.status());
+expect(res.status()).toBe(201);
+expect(res.status()).toBe(400); // fractional quantity is still "assumed until answered"
+```
+
+## 2. Black box
+
+Tests call HTTP only. Never import, read, or change anything under `src/`.
+
+```typescript
+// ✅ GOOD
+const res = await request.get('/vendors');
+
+// ❌ BAD
+import { createApp } from '../../src/app.js';
+```
+
+## 3. Requests
+
+Use Playwright's `request` fixture with path-only URLs. Host and port come from `baseURL` in `playwright.config.ts`, which reads `API_BASE_URL` from `.env`.
+
+```typescript
+// ✅ GOOD
+await request.get('/vendors');
+
+// ❌ BAD
+await request.get('http://localhost:8000/vendors');
+```
+
+## 4. Data
+
+Each test creates what it needs: its own vendor for exposure checks, unique `invoice_number` values (`` `INV-${Date.now()}` ``). Never call `POST /admin/reset` inside a test — only `tests/api/reset.setup.ts` does that before the run. Do not rely on another test's records except steps in one serial `@e2e` flow.
+
+```typescript
+// ✅ GOOD — this test's vendor, then its exposure; a fresh invoice number
+const created = await request.post('/vendors', { data: { name: `QA ${Date.now()}` } });
+const { id } = await created.json();
+await request.get(`/vendors/${id}/exposure`);
+const invoiceNumber = `INV-${Date.now()}`;
+
+// ❌ BAD — reset inside a test, or a PO / invoice number owned by another file
+await request.post('/admin/reset');
+await request.post('/invoices', {
+  data: { po_id: 'po-from-other-spec', invoice_number: 'INV-1001', line_items },
+});
+```
+
+## 5. Per endpoint
+
+Cover each endpoint with three cases: **positive** (happy path), **negative** (one invalid input or one rule violation at a time → 400 with `validation_error` or the named rule), **error** (unknown id → 404).
+
+```typescript
+// ✅ GOOD — POST /vendors: 201, empty name → 400 validation_error, unknown exposure → 404
+await request.post('/vendors', { data: { name: `QA ${Date.now()}` } }); // 201
+await request.post('/vendors', { data: { name: '' } }); // 400 validation_error
+await request.get('/vendors/vnd-does-not-exist/exposure'); // 404
+
+// ❌ BAD — happy path only, or two invalid inputs so the 400 cannot be blamed on one rule
+await request.get('/vendors'); // 200 only; no empty-name POST, no unknown-id 404
+await request.post('/purchase-orders', {
+  data: { vendor_id: 'vnd-002', line_items: [{ sku: 'LUM-2X4-8', quantity: 0, unit_price: 4.75 }] },
+});
+```
+
+## 6. Assertions
+
+Assert the status. On every 400 assert the exact `rule` (wrong rule = fail). Assert values that matter (`open_ap_liability`, `ordered_value`, `partial_receipt`), not merely that a key exists. Validate the parsed body with `expectSchema` against the OpenAPI component schema (P48).
+
+```typescript
+// ✅ GOOD
+expect(res.status()).toBe(400);
+expect(body.rule).toBe('receive_quantity_limit');
+await expectSchema(body, 'Error');
+
+expect(exposure.status()).toBe(200);
+expect(exposureBody.open_ap_liability).toBe(0);
+await expectSchema(exposureBody, 'VendorExposure');
+
+// ❌ BAD — any rule passes; presence is not a value
+expect(res.status()).toBe(400);
+expect(body).toHaveProperty('rule');
+```
+
+## 7. Tags
+
+Exactly one tag per test: `{ tag: '@api' }` for a single endpoint, `{ tag: '@e2e' }` for a multi-step flow. Put the tag on `test()`, never on `describe()`.
+
+```typescript
+// ✅ GOOD
+test('POST /purchase-orders rejects inactive vendor', { tag: '@api' }, async ({ request }) => {});
+test('order through exposure', { tag: '@e2e' }, async ({ request }) => {});
+
+// ❌ BAD — tag on describe, or two tags on one test
+test.describe('vendors', { tag: '@api' }, () => {
+  test('approve', { tag: ['@api', '@e2e'] }, async ({ request }) => {});
+});
+```
+
+## 8. Known bugs
+
+A test for a confirmed bug keeps its full assertions and uses `test.fail(true, 'BUG-<n>: <one line>')`. Never delete the test, skip it, or loosen expectations.
+
+```typescript
+// ✅ GOOD
+test('duplicate invoice detection is case-insensitive', { tag: '@api' }, async ({ request }) => {
+  test.fail(true, 'BUG-3: second INV-7 accepted with 201');
+  expect(second.status()).toBe(400);
+  expect((await second.json()).rule).toBe('duplicate_invoice_detection');
+});
+
+// ❌ BAD — skipped, or the assertion changed to the buggy 201
+test.skip(true, 'duplicate invoice is broken');
+expect(second.status()).toBe(201);
+```
+
+## 9. Evidence
+
+Label every behavioral claim in comments, reports, or `docs/QUESTIONS.md`: **executed** (this run proved it), **inspected only** (read from docs/OpenAPI, not exercised), or **not yet tested**.
+
+```markdown
+<!-- ✅ GOOD -->
+- inactive_vendor_gate on vnd-002 → 400 — executed
+- API.md says invoice numbers ignore case; no request sent — inspected only
+- second POST /purchase-orders/{poId}/submit on the same draft — not yet tested
+
+<!-- ❌ BAD -->
+- All 11 rules are covered (no label, no proof)
+```
