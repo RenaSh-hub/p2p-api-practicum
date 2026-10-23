@@ -5,3 +5,4 @@ dist/
 __pycache__/
 test-results/
 playwright-report/
+test-report.json
