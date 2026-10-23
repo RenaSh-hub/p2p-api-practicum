@@ -1,10 +1,14 @@
 #!/usr/bin/env python3
 """Block agent edits that reduce the number of active expect( calls in a spec."""
 
+from __future__ import annotations
+
 import json
 import re
 import sys
 from pathlib import Path
+
+from guard_common import count_active_expects
 
 sys.stdout.reconfigure(encoding="utf-8", newline="\n")
 sys.stderr.reconfigure(encoding="utf-8", newline="\n")
@@ -17,27 +21,14 @@ def fail_invalid(reason: str) -> None:
     sys.exit(1)
 
 
-def count_active_expects(text: str) -> int:
-    """Count expect( calls that are not commented out."""
-    total = 0
-    for line in text.splitlines():
-        stripped = line.lstrip()
-        if stripped.startswith("//") or stripped.startswith("*"):
-            continue
-        comment_at = stripped.find("//")
-        code = stripped if comment_at == -1 else stripped[:comment_at]
-        total += code.count("expect(")
-    return total
-
-
 def load_payload() -> dict:
     raw = sys.stdin.read()
     if not raw.strip():
-        fail_invalid("guard-test-assertions: empty hook input")
+        fail_invalid("guard-test-assertions: empty stdin")
     try:
         payload = json.loads(raw)
     except json.JSONDecodeError as exc:
-        fail_invalid(f"guard-test-assertions: invalid JSON: {exc}")
+        fail_invalid(f"guard-test-assertions: invalid JSON — {exc}")
     if not isinstance(payload, dict):
         fail_invalid("guard-test-assertions: hook payload is not an object")
     return payload
@@ -48,7 +39,7 @@ def validated_edits(payload: dict) -> list:
     if edits is None:
         return []
     if not isinstance(edits, list):
-        fail_invalid("guard-test-assertions: edits is not a list")
+        fail_invalid("guard-test-assertions: edits must be a list")
     for index, edit in enumerate(edits):
         if not isinstance(edit, dict):
             fail_invalid(f"guard-test-assertions: edits[{index}] is not an object")

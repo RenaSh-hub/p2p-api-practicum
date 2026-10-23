@@ -93,11 +93,11 @@ Assert the status. On every 400 assert the exact `rule` (wrong rule = fail). Ass
 // ✅ GOOD
 expect(res.status()).toBe(400);
 expect(body.rule).toBe('receive_quantity_limit');
-await expectSchema(body, 'Error');
+await expectSchema(request, body, 'Error');
 
 expect(exposure.status()).toBe(200);
 expect(exposureBody.open_ap_liability).toBe(0);
-await expectSchema(exposureBody, 'VendorExposure');
+await expectSchema(request, exposureBody, 'VendorExposure');
 
 // ❌ BAD — any rule passes; presence is not a value
 expect(res.status()).toBe(400);

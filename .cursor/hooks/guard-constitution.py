@@ -1,10 +1,15 @@
 #!/usr/bin/env python3
 """Block new constitution violations in tests/ and pages/ sources."""
 
+from __future__ import annotations
+
 import json
 import re
 import sys
+from collections.abc import Callable
 from pathlib import Path
+
+from guard_common import count_active_expects
 
 sys.stdout.reconfigure(encoding="utf-8", newline="\n")
 sys.stderr.reconfigure(encoding="utf-8", newline="\n")
@@ -12,7 +17,7 @@ sys.stderr.reconfigure(encoding="utf-8", newline="\n")
 GUARDED_FILE = re.compile(r"(?:^|/)(?:tests|pages)/.+\.[jt]sx?$")
 SPEC_FILE = re.compile(r"(?:^|/)tests/.+\.(?:spec|test)\.[jt]sx?$")
 XPATH_LOCATOR = re.compile(r"""locator\(\s*(['"`])//""")
-ANY_TYPE = re.compile(r": any\b|as any\b|<any>|Array<any>")
+ANY_TYPE = re.compile(r":\s*any\b|as\s+any\b|<any>|Array<any>")
 FILL_EMAIL = re.compile(r"""\.fill\(\s*(['"`])[^'"`\n]*@[^'"`\n]*\1""")
 CREDENTIAL = re.compile(
     r"""(?i)\b(password|secret|api_key|token)\b\s*[:=]\s*(['"`])([^'"`\n]{4,})\2"""
@@ -22,31 +27,10 @@ DESCRIBE_TAG = re.compile(
     re.DOTALL,
 )
 
-PATTERN_REASONS = (
-    ".waitForTimeout(",
-    "XPath locator",
-    "any type",
-    "hardcoded credential",
-    "tag on test.describe",
-)
-
 
 def fail_invalid(reason: str) -> None:
     print(reason, file=sys.stderr)
     sys.exit(1)
-
-
-def count_active_expects(text: str) -> int:
-    """Count expect( calls that are not commented out."""
-    total = 0
-    for line in text.splitlines():
-        stripped = line.lstrip()
-        if stripped.startswith("//") or stripped.startswith("*"):
-            continue
-        comment_at = stripped.find("//")
-        code = stripped if comment_at == -1 else stripped[:comment_at]
-        total += code.count("expect(")
-    return total
 
 
 def code_for_patterns(text: str) -> str:
@@ -79,20 +63,85 @@ def code_for_patterns(text: str) -> str:
     return "\n".join(kept)
 
 
-def pattern_reasons(text: str) -> set[str]:
-    code = code_for_patterns(text)
-    found: set[str] = set()
-    if ".waitForTimeout(" in code:
-        found.add(".waitForTimeout(")
-    if XPATH_LOCATOR.search(code):
-        found.add("XPath locator")
-    if ANY_TYPE.search(code):
-        found.add("any type")
-    if FILL_EMAIL.search(code) or CREDENTIAL.search(code):
-        found.add("hardcoded credential")
-    if DESCRIBE_TAG.search(code):
-        found.add("tag on test.describe")
-    return found
+def count_wait_for_timeout(content: str) -> int:
+    return code_for_patterns(content).count(".waitForTimeout(")
+
+
+def count_pattern(content: str, pattern: re.Pattern[str]) -> int:
+    return len(pattern.findall(code_for_patterns(content)))
+
+
+def check_increase(
+    label: str,
+    before: str,
+    after: str,
+    counter: Callable[[str], int],
+) -> str | None:
+    before_n = counter(before)
+    after_n = counter(after)
+    if after_n > before_n:
+        return f"{label} introduced ({before_n} -> {after_n})"
+    return None
+
+
+def check_delta_increase(
+    label: str,
+    old_s: str,
+    new_s: str,
+    counter: Callable[[str], int],
+) -> str | None:
+    if counter(new_s) > counter(old_s):
+        return f"{label} introduced in edit"
+    return None
+
+
+def pattern_checks() -> list[tuple[str, Callable[[str], int]]]:
+    return [
+        (".waitForTimeout(", count_wait_for_timeout),
+        (
+            "XPath locator (locator('//…'))",
+            lambda s: count_pattern(s, XPATH_LOCATOR),
+        ),
+        ("TypeScript any", lambda s: count_pattern(s, ANY_TYPE)),
+        (
+            "Hardcoded email in .fill()",
+            lambda s: count_pattern(s, FILL_EMAIL),
+        ),
+        (
+            "Hardcoded password/secret/api_key/token",
+            lambda s: count_pattern(s, CREDENTIAL),
+        ),
+        (
+            "tag on test.describe()",
+            lambda s: count_pattern(s, DESCRIBE_TAG),
+        ),
+    ]
+
+
+def collect_file_violations(before: str, after: str, *, is_spec: bool) -> list[str]:
+    reasons: list[str] = []
+    for label, counter in pattern_checks():
+        reason = check_increase(label, before, after, counter)
+        if reason:
+            reasons.append(reason)
+    if is_spec:
+        before_e = count_active_expects(before)
+        after_e = count_active_expects(after)
+        if before_e > after_e:
+            reasons.append(f"active expect( count dropped ({before_e} -> {after_e})")
+    return reasons
+
+
+def collect_delta_violations(old_s: str, new_s: str, *, is_spec: bool) -> list[str]:
+    reasons: list[str] = []
+    for label, counter in pattern_checks():
+        reason = check_delta_increase(label, old_s, new_s, counter)
+        if reason:
+            reasons.append(reason)
+    if is_spec:
+        if count_active_expects(new_s) < count_active_expects(old_s):
+            reasons.append("active expect( removed or commented in edit")
+    return reasons
 
 
 def load_payload() -> dict:
@@ -137,13 +186,6 @@ def reverse_edits(after: str, edits: list) -> str | None:
     return content
 
 
-def introduced_patterns(edits: list) -> list[str]:
-    introduced: set[str] = set()
-    for edit in edits:
-        introduced.update(pattern_reasons(edit["new_string"]) - pattern_reasons(edit["old_string"]))
-    return [reason for reason in PATTERN_REASONS if reason in introduced]
-
-
 def block(file_path: str, reasons: list[str]) -> None:
     message = f"Blocked: constitution violation in {file_path} — " + "; ".join(reasons)
     json.dump({"user_message": message, "agent_message": message}, sys.stdout)
@@ -168,30 +210,32 @@ def main() -> None:
     except OSError as exc:
         fail_invalid(f"guard-constitution: cannot read {file_path}: {exc}")
 
+    is_spec = SPEC_FILE.search(normalized) is not None
     reasons: list[str] = []
     before = reverse_edits(after, edits)
-    if before is None:
-        reasons.extend(introduced_patterns(edits))
-        if SPEC_FILE.search(normalized):
+    if before is not None:
+        reasons = collect_file_violations(before, after, is_spec=is_spec)
+    else:
+        for edit in edits:
+            reasons.extend(
+                collect_delta_violations(
+                    edit["old_string"],
+                    edit["new_string"],
+                    is_spec=is_spec,
+                ),
+            )
+        if is_spec and not any("expect(" in r for r in reasons):
             after_count = count_active_expects(after)
             delta = sum(
-                count_active_expects(edit["old_string"]) - count_active_expects(edit["new_string"])
+                count_active_expects(edit["old_string"])
+                - count_active_expects(edit["new_string"])
                 for edit in edits
             )
             before_count = after_count + delta
-            if after_count < before_count:
-                reasons.append(f"active expect( count {before_count} -> {after_count}")
-    else:
-        reasons.extend(
-            reason
-            for reason in PATTERN_REASONS
-            if reason in pattern_reasons(after) - pattern_reasons(before)
-        )
-        if SPEC_FILE.search(normalized):
-            before_count = count_active_expects(before)
-            after_count = count_active_expects(after)
-            if after_count < before_count:
-                reasons.append(f"active expect( count {before_count} -> {after_count}")
+            if before_count > after_count:
+                reasons.append(
+                    f"active expect( count dropped ({before_count} -> {after_count})"
+                )
 
     if reasons:
         block(file_path, reasons)
