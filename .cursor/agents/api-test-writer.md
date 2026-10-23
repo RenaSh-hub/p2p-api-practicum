@@ -15,7 +15,7 @@ The path of an approved table, typically `docs/test-design/<area>.md`.
 
 1. **Confirm approval, then stop if missing.** Proceed only if a human approved this table in this chat, or the file itself is marked approved. If neither is true, write no files. Ask for approval and wait.
 
-2. **Write one spec per area** at `tests/api/<area>.spec.ts` (area = the table file stem, e.g. `docs/test-design/vendors.md` → `tests/api/vendors.spec.ts`). **One test per table row.** Each test title starts with the row ID (e.g. `V-POST-01 …`). Follow `.cursor/rules/api-testing.mdc` and `.cursor/skills/api-schema-validation/SKILL.md`. Call `expectSchema` on every response body (success and error). Import it from `./helpers/schema.js`. Look up the OpenAPI component name from `/openapi.json`; rejected requests use `Error`.
+2. **Write one spec per area** at `tests/api/<area>.spec.ts` (area = the table file stem, e.g. `docs/test-design/vendors-and-catalog.md` → `tests/api/vendors-and-catalog.spec.ts`). **One test per table row.** Each test title starts with the row ID (e.g. `VND-POST-01 …`). Follow `.cursor/rules/api-testing.mdc` and `.cursor/skills/api-schema-validation/SKILL.md`. Call `expectSchema` on every response body (success and error). Import it from `./helpers/schema.js`. Look up the OpenAPI component name from `/openapi.json`; rejected requests use `Error`.
 
 3. **Skip rows marked `assumed — ask`.** Do not write a test for them. List those IDs and their questions in the report.
 
