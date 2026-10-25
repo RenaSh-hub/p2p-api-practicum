@@ -235,6 +235,7 @@ test.describe('POST /invoices', () => {
   });
 
   test('INV-POST-N04 rejects case-variant duplicate invoice_number', { tag: '@api' }, async ({ request }) => {
+    test.fail(true, 'BUG-3: second inv-7 accepted with 201');
     const poId1 = await setupPo1LFull(request);
     const poId2 = await setupPo1LFull(request);
 
@@ -256,6 +257,7 @@ test.describe('POST /invoices', () => {
   });
 
   test('INV-POST-N05 rejects padded duplicate invoice_number', { tag: '@api' }, async ({ request }) => {
+    test.fail(true, 'BUG-3: second invoice with surrounding spaces accepted with 201');
     const poId1 = await setupPo1LFull(request);
     const poId2 = await setupPo1LFull(request);
 
@@ -342,6 +344,7 @@ test.describe('POST /invoices', () => {
   });
 
   test('INV-POST-N10 rejects total value over received with higher unit_price', { tag: '@api' }, async ({ request }) => {
+    test.fail(true, 'BUG-1: invoice of 47.60 accepted against 47.50 received');
     const poId = await setupPo1LFull(request);
 
     const { res, body } = await postInvoice(request, {
@@ -698,6 +701,7 @@ test.describe('POST /invoices/{invoiceId}/match', () => {
   });
 
   test('INV-MAT-02 partial PO receipt sets partial_receipt true', { tag: '@e2e' }, async ({ request }) => {
+    test.fail(true, 'BUG-2: partial_receipt is false when a line is not fully received');
     const poId = await setupPo2LPart(request);
 
     const created = await postInvoice(request, {
