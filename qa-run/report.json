@@ -1,0 +1,305 @@
+{
+  "happy_path": {
+    "status": "PASS",
+    "steps": [
+      { "step": 1, "method": "GET", "path": "/health", "status": 200, "verdict": "as-documented" },
+      { "step": 2, "method": "GET", "path": "/openapi.json", "status": 200, "verdict": "as-documented" },
+      { "step": 3, "method": "GET", "path": "/vendors", "status": 200, "verdict": "as-documented" },
+      { "step": 4, "method": "GET", "path": "/skus", "status": 200, "verdict": "as-documented" },
+      { "step": 5, "method": "POST", "path": "/vendors", "status": 201, "verdict": "as-documented" },
+      { "step": 6, "method": "POST", "path": "/purchase-orders", "status": 201, "verdict": "as-documented" },
+      { "step": 7, "method": "POST", "path": "/purchase-orders/po-099df33d/submit", "status": 200, "verdict": "as-documented" },
+      { "step": 8, "method": "POST", "path": "/purchase-orders/po-099df33d/receive", "status": 200, "verdict": "as-documented" },
+      { "step": 9, "method": "POST", "path": "/invoices", "status": 201, "verdict": "as-documented" },
+      { "step": 10, "method": "POST", "path": "/invoices/inv-85107c32/match", "status": 200, "verdict": "as-documented" },
+      { "step": 11, "method": "POST", "path": "/invoices/inv-85107c32/approve", "status": 200, "verdict": "as-documented" },
+      { "step": 12, "method": "GET", "path": "/vendors/vnd-6fdbf5cd/exposure", "status": 200, "verdict": "as-documented" }
+    ]
+  },
+  "adversarial": [
+    {
+      "rule": "inactive_vendor_gate",
+      "status": "HELD",
+      "evidence": {
+        "request": {
+          "method": "POST",
+          "path": "/purchase-orders",
+          "body": {
+            "vendor_id": "vnd-4f257ad6",
+            "line_items": [
+              { "sku": "LUM-2X4-8", "description": "2x4 stud, 8 ft", "quantity": 2, "unit_price": 4.75 }
+            ]
+          }
+        },
+        "response": {
+          "status": 400,
+          "body": {
+            "detail": "Vendor vnd-4f257ad6 is inactive. Purchase orders need an active vendor.",
+            "rule": "inactive_vendor_gate"
+          }
+        },
+        "expected": "400 with rule inactive_vendor_gate. docs/API.md Business rules row 1: no purchase order can be created for an inactive vendor.",
+        "reason": "Refused with 400 and rule inactive_vendor_gate. Vendor vnd-4f257ad6 is inactive. Purchase orders need an active vendor."
+      }
+    },
+    {
+      "rule": "receive_quantity_limit",
+      "status": "HELD",
+      "evidence": {
+        "request": {
+          "method": "POST",
+          "path": "/purchase-orders/po-640340a0/receive",
+          "body": { "items": [{ "sku": "LUM-2X4-8", "quantity": 20 }] }
+        },
+        "response": {
+          "status": 400,
+          "body": {
+            "detail": "Cannot receive 20 of LUM-2X4-8: ordered 4, already received 0.",
+            "rule": "receive_quantity_limit"
+          }
+        },
+        "expected": "400 with rule receive_quantity_limit. docs/API.md Business rules row 2: received quantity never exceeds ordered quantity.",
+        "reason": "Refused with 400 and rule receive_quantity_limit. Cannot receive 20 of LUM-2X4-8: ordered 4, already received 0."
+      }
+    },
+    {
+      "rule": "overpayment_protection",
+      "status": "BREACHED",
+      "evidence": {
+        "request": {
+          "method": "POST",
+          "path": "/invoices",
+          "body": {
+            "po_id": "po-a5d76603",
+            "invoice_number": "INV-Cent-1792900206814-9",
+            "line_items": [{ "sku": "LUM-2X4-8", "quantity": 1, "unit_price": 10.01 }]
+          }
+        },
+        "response": {
+          "status": 201,
+          "body": {
+            "id": "inv-7ee29419",
+            "po_id": "po-a5d76603",
+            "vendor_id": "vnd-308e619e",
+            "invoice_number": "INV-Cent-1792900206814-9",
+            "status": "received",
+            "line_items": [{ "sku": "LUM-2X4-8", "quantity": 1, "unit_price": 10.01 }],
+            "total_amount": 10.01,
+            "matched": false,
+            "partial_receipt": null
+          }
+        },
+        "expected": "400 with rule overpayment_protection. docs/API.md Business rules row 3: no tolerance, including one cent.",
+        "reason": "Accepted with status 201 and total_amount 10.01 after 1 unit was received at 10.00. Business rules row 3 says invoiced value never exceeds what was received, and there is no tolerance. A fresh replay returned 201 as well."
+      }
+    },
+    {
+      "rule": "three_way_match_gate",
+      "status": "HELD",
+      "evidence": {
+        "request": { "method": "POST", "path": "/invoices/inv-93068080/approve", "body": {} },
+        "response": {
+          "status": 400,
+          "body": {
+            "detail": "Invoice inv-93068080 must pass the 3-way match before approval.",
+            "rule": "three_way_match_gate"
+          }
+        },
+        "expected": "400 with rule three_way_match_gate. docs/API.md Business rules row 4: an invoice cannot be approved until it passed the 3-way match.",
+        "reason": "Refused with 400 and rule three_way_match_gate. Invoice inv-93068080 must pass the 3-way match before approval."
+      }
+    },
+    {
+      "rule": "partial_receipt_flag",
+      "status": "BREACHED",
+      "evidence": {
+        "request": { "method": "POST", "path": "/invoices/inv-564c248a/match", "body": {} },
+        "response": {
+          "status": 200,
+          "body": {
+            "invoice_id": "inv-564c248a",
+            "po_id": "po-be1405ed",
+            "status": "matched",
+            "matched": true,
+            "partial_receipt": false,
+            "ordered_value": 70,
+            "received_value": 50,
+            "invoice_total": 50,
+            "message": "3-way match passed."
+          }
+        },
+        "expected": "200 and partial_receipt true. docs/API.md Business rules row 5: the flag is true when any line of the PO is not fully received.",
+        "reason": "Match returned 200 with partial_receipt false. Ordered value is 70 and received value is 50, so a line is not fully received. Business rules row 5 requires partial_receipt true. A fresh replay returned the same false flag."
+      }
+    },
+    {
+      "rule": "duplicate_invoice_detection",
+      "status": "BREACHED",
+      "evidence": {
+        "request": {
+          "method": "POST",
+          "path": "/invoices",
+          "body": {
+            "po_id": "po-4b5d339d",
+            "invoice_number": "inv-case-1792900208411-25",
+            "line_items": [{ "sku": "LUM-2X4-8", "quantity": 4, "unit_price": 5 }]
+          }
+        },
+        "response": {
+          "status": 201,
+          "body": {
+            "id": "inv-c16c6f14",
+            "po_id": "po-4b5d339d",
+            "vendor_id": "vnd-ee2501c6",
+            "invoice_number": "inv-case-1792900208411-25",
+            "status": "received",
+            "line_items": [{ "sku": "LUM-2X4-8", "quantity": 4, "unit_price": 5 }],
+            "total_amount": 20,
+            "matched": false,
+            "partial_receipt": null
+          }
+        },
+        "expected": "400 with rule duplicate_invoice_detection. docs/API.md Business rules row 6: invoice numbers are compared ignoring upper or lower case. The second invoice quantity still fits the receipt.",
+        "reason": "Accepted with status 201 and total_amount 20. The number differs from the vendor's existing invoice number only by letter case. Business rules row 6 treats those as the same number. A fresh replay returned 201 as well."
+      }
+    },
+    {
+      "rule": "gl_balance",
+      "status": "HELD",
+      "evidence": {
+        "request": { "method": "POST", "path": "/invoices/inv-9253a7ac/approve", "body": {} },
+        "response": {
+          "status": 200,
+          "body": {
+            "invoice_id": "inv-9253a7ac",
+            "status": "approved",
+            "gl_entry": {
+              "debits": [{ "account": "5000 Materials Expense", "amount": 11.75 }],
+              "credits": [{ "account": "2000 Accounts Payable", "amount": 11.75 }],
+              "balanced": true
+            },
+            "vendor_exposure": 11.75
+          }
+        },
+        "expected": "200, gl_entry.balanced true, and total debits equal total credits equal 11.75. docs/API.md Business rules row 7 and Basics (money rounded to cents).",
+        "reason": "Debits and credits both equal 11.75 and balanced is true."
+      }
+    },
+    {
+      "rule": "invoice_line_validation",
+      "status": "HELD",
+      "evidence": {
+        "request": {
+          "method": "POST",
+          "path": "/invoices",
+          "body": {
+            "po_id": "po-b9ede242",
+            "invoice_number": "INV-Foreign-1792900212074-47",
+            "line_items": [{ "sku": "PLY-12-4X8", "quantity": 1, "unit_price": 5 }]
+          }
+        },
+        "response": {
+          "status": 400,
+          "body": {
+            "detail": "SKU PLY-12-4X8 is not on the purchase order.",
+            "rule": "invoice_line_validation"
+          }
+        },
+        "expected": "400 with rule invoice_line_validation. docs/API.md Business rules row 8: every invoice line is for a SKU on the PO.",
+        "reason": "Refused with 400 and rule invoice_line_validation. SKU PLY-12-4X8 is not on the purchase order."
+      }
+    },
+    {
+      "rule": "duplicate_approval",
+      "status": "HELD",
+      "evidence": {
+        "request": { "method": "POST", "path": "/invoices/inv-f36c11ed/approve", "body": {} },
+        "response": {
+          "status": 400,
+          "body": {
+            "detail": "Invoice inv-f36c11ed is already approved.",
+            "rule": "duplicate_approval"
+          }
+        },
+        "expected": "400 with rule duplicate_approval. docs/API.md Business rules row 9: an invoice can be approved only once.",
+        "reason": "Refused with 400 and rule duplicate_approval. Invoice inv-f36c11ed is already approved."
+      }
+    },
+    {
+      "rule": "workflow_gate",
+      "status": "HELD",
+      "evidence": {
+        "request": {
+          "method": "POST",
+          "path": "/purchase-orders/po-ad2528a2/receive",
+          "body": { "items": [{ "sku": "LUM-2X4-8", "quantity": 1 }] }
+        },
+        "response": {
+          "status": 400,
+          "body": {
+            "detail": "Goods can only be received on a submitted purchase order. po-ad2528a2 is draft.",
+            "rule": "workflow_gate"
+          }
+        },
+        "expected": "400 with rule workflow_gate. docs/API.md Business rules row 10: receive only on a submitted purchase order.",
+        "reason": "Refused with 400 and rule workflow_gate. Goods can only be received on a submitted purchase order. po-ad2528a2 is draft."
+      }
+    },
+    {
+      "rule": "vendor_exposure_math",
+      "status": "HELD",
+      "evidence": {
+        "request": { "method": "GET", "path": "/vendors/vnd-3cb38398/exposure" },
+        "response": {
+          "status": 200,
+          "body": {
+            "vendor_id": "vnd-3cb38398",
+            "open_ap_liability": 42.5,
+            "approved_invoices": ["inv-903aa467", "inv-9cd3a2b9"]
+          }
+        },
+        "expected": "200 and open_ap_liability 42.50, listing only the two approved invoice ids. docs/API.md Business rules row 11: exposure is the sum of total_amount over approved invoices.",
+        "reason": "open_ap_liability 42.5 equals the approved invoice total 42.50, and approved_invoices lists only those invoices."
+      }
+    },
+    {
+      "rule": "validation_error",
+      "status": "HELD",
+      "evidence": {
+        "request": {
+          "method": "POST",
+          "path": "/purchase-orders",
+          "body": {
+            "vendor_id": "vnd-260dfdeb",
+            "line_items": [
+              { "sku": "LUM-2X4-8", "description": "2x4 stud, 8 ft", "quantity": 1, "unit_price": 0 }
+            ]
+          }
+        },
+        "response": {
+          "status": 201,
+          "body": {
+            "id": "po-7cffb41e",
+            "vendor_id": "vnd-260dfdeb",
+            "status": "draft",
+            "line_items": [
+              {
+                "sku": "LUM-2X4-8",
+                "description": "2x4 stud, 8 ft",
+                "quantity": 1,
+                "unit_price": 0,
+                "received_quantity": 0
+              }
+            ],
+            "ordered_value": 0,
+            "received_value": 0,
+            "fully_received": false
+          }
+        },
+        "expected": "201. docs/API.md Purchase orders allows unit_price from 0 to 100,000, so zero is a valid price.",
+        "reason": "Draft purchase order was created with unit_price 0, which is inside the documented range of 0 to 100,000."
+      }
+    }
+  ],
+  "summary": "The happy path matched the documentation on all 12 steps. Of the eleven business rules, eight held and three broke. overpayment_protection let a vendor bill 10.01 against 10.00 of goods received (1 cent above the receipt) and 1005.00 against 1000.00 received (5.00, half a percent). A doubled price, 95.00 against 47.50 received, was refused. duplicate_invoice_detection accepted a second invoice for 20.00 whose number differed only by letter case, and another second invoice for 20.00 whose number differed only by surrounding spaces. partial_receipt_flag reported partial_receipt false when the last line was short: ordered value 70, received value 50, so 20.00 of the order had not arrived. When the short line was first, the flag was true. A unit price of 0 was accepted, which the Purchase orders section allows. Open question: a purchase-order quantity of 0, a quantity of -5, and a unit price of -1 were each rejected with status 400 and rule validation_error. The Purchase orders section states those numeric limits, and none of the eleven named business rules covers them. Are those rejections part of the contract under validation_error? Every logged breach reproduced on a new vendor and a new order after a reset."
+}
