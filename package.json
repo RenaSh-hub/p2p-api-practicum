@@ -9,7 +9,6 @@
     "dev": "tsx watch src/server.ts",
     "smoke": "tsx scripts/smoke.ts",
     "test:api": "playwright test",
-    "docs:diagram-pdf": "tsx scripts/generate-project-diagram-pdf.ts",
     "typecheck": "tsc --noEmit"
   },
   "engines": {

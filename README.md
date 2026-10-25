@@ -38,7 +38,6 @@ The API starts on `http://localhost:8000`. Stop it with Ctrl+C.
 | `npm run dev` | Start it and restart on every code change |
 | `npm run smoke` | Run the happy path once against the running API |
 | `npm run typecheck` | Check the TypeScript code |
-| `npm run docs:diagram-pdf` | Regenerate `docs/project-diagram.pdf` from the Mermaid source |
 | `curl -X POST localhost:8000/admin/reset` | Put the data back to the seed state |
 
 ## Project layout
@@ -53,7 +52,7 @@ The API starts on `http://localhost:8000`. Stop it with Ctrl+C.
 | `src/openapi.ts` | Route descriptions for the OpenAPI document |
 | `scripts/smoke.ts` | The happy-path check |
 | `docs/API.md` | The written reference |
-| `docs/project-diagram.md` | Architecture map (Mermaid); [PDF](./docs/project-diagram.pdf) |
+| `docs/project-diagram.md` | Architecture map (Mermaid) |
 | `CHALLENGE.md` | The QA agent challenge |
 
 ## Troubleshooting

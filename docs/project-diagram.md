@@ -2,8 +2,6 @@
 
 This document maps how the repository fits together: the practice API, documentation, automated tests, Cursor QA agents, and CI.
 
-**PDF export:** run `npm run docs:diagram-pdf` to regenerate [project-diagram.pdf](./project-diagram.pdf) from this file.
-
 ## Repository overview
 
 ```mermaid
